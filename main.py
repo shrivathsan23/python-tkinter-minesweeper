@@ -1,3 +1,4 @@
+import time
 import random
 
 from threading import Thread
@@ -50,14 +51,19 @@ class Tile(Label):
             self.config(text = self.value, bg = State.OPEN_TILE)
     
     def display_bomb(self):
-        if not self.is_flagged:
-            self.config(text = self.value, bg = State.BOMB_TILE)
+        self.config(text = self.value, bg = State.BOMB_TILE)
     
     def force_open(self):
         self.is_opened = True
         self.is_flagged = False
 
         self.display_value()
+    
+    def is_tile_open(self):
+        return self.is_opened
+    
+    def is_tile_flagged(self):
+        return self.is_flagged
         
 class Land(Tk):
     def __init__(self, ROWS = 25, COLS = 25):
@@ -65,7 +71,9 @@ class Land(Tk):
 
         self.ROWS = ROWS
         self.COLS = COLS
+
         self.BOMBS_COUNT = (self.ROWS * self.COLS * 15) // 100
+        self.WINNING_TILE_COUNT = (self.ROWS * self.COLS) - self.BOMBS_COUNT
 
         self.ALL_DIRS = [
             (-1, -1),
@@ -95,6 +103,10 @@ class Land(Tk):
         
         self.is_first_click = True
         self.is_playing = True
+        
+        self.opened_tile_count = 0
+        self.flags_left = self.BOMBS_COUNT
+        
         self.bfs_visited = [[False for j in range(self.COLS)] for i in range(self.ROWS)]
 
         for i in range(self.ROWS):
@@ -116,10 +128,22 @@ class Land(Tk):
         self.reset_btn = Button(self.control_frame, text = 'Reset', command = self.reset_tiles)
         self.reset_btn.pack(side = 'right')
 
+        self.info_disp_frame = Frame(self)
+        self.info_disp_frame.pack(fill = 'both')
+
+        self.open_tiles_count_label = Label(self.info_disp_frame, text = f'Opened Tiles: {self.opened_tile_count}')
+        self.open_tiles_count_label.pack(side = 'left')
+
+        self.flag_label = Label(self.info_disp_frame, text = f'Flags Left: {self.flags_left}')
+        self.flag_label.pack(side = 'right')
+
         self.update_idletasks()
         self.geometry(f'{self.winfo_reqwidth()}x{self.winfo_reqheight()}+5+5')
 
         self.mainloop()
+    
+    def check_winning_state(self):
+        return self.opened_tile_count == self.WINNING_TILE_COUNT
     
     def is_safe(self, i, j):
         return 0 <= i < self.ROWS and 0 <= j < self.COLS
@@ -140,10 +164,16 @@ class Land(Tk):
         return neighbor_count
     
     def reset_tiles(self):
-        [self.tiles[i][j].reset_tile() for i in range(self.ROWS) for j in range(self.COLS)]
+        self.opened_tile_count = 0
+        self.flags_left = self.BOMBS_COUNT
         
         self.is_first_click = True
         self.is_playing = True
+        
+        self.open_tiles_count_label.config(text = f'Opened Tiles: {self.opened_tile_count}')
+        self.flag_label.config(text = f'Flags Left: {self.flags_left}')
+        
+        [self.tiles[i][j].reset_tile() for i in range(self.ROWS) for j in range(self.COLS)]
         self.bfs_visited = [[False for j in range(self.COLS)] for i in range(self.ROWS)]
     
     def initialize_bombs(self, x, y):
@@ -176,19 +206,23 @@ class Land(Tk):
                     if new_tile_value == '' and (x, y) in self.ALL_DIRS:
                         tiles_to_open.append((new_i, new_j))
                     
-                    elif new_tile_value != 'B':
+                    elif new_tile_value != 'B' and not self.tiles[new_i][new_j].is_tile_open():
                         self.tiles[new_i][new_j].force_open()
+                        self.opened_tile_count += 1
             
-            self.tiles[i][j].force_open()
+            if not self.tiles[i][j].is_tile_open():
+                self.tiles[i][j].force_open()
+                self.opened_tile_count += 1
 
     def open_tile(self, tile, i, j):
         if self.is_playing:
+            thread = Thread(target = self.open_zero_tiles, args = (i, j))
+            
             if self.is_first_click:
                 self.is_first_click = False
                 self.initialize_bombs(i, j)
             
             if not tile.get_flag():
-                tile.open_tile()
                 tile_value = tile.get_value()
 
                 if tile_value == 'B':
@@ -198,13 +232,27 @@ class Land(Tk):
                     self.is_playing = False
                 
                 elif tile_value == '':
-                    Thread(target = self.open_zero_tiles, args = (i, j)).start()
+                    thread.run()
                 
                 else:
+                    tile.open_tile()
+                    self.opened_tile_count += 1
+                    
                     tile.display_value()
+            
+            while thread.is_alive():
+                thread.join(2)
+            
+            if self.check_winning_state():
+                print('Won!!')
+            
+            self.open_tiles_count_label.config(text = f'Opened Tiles: {self.opened_tile_count}')
     
     def toggle_flag(self, tile):
-        tile.toggle_flag()
+        if self.is_playing and not tile.is_tile_open():
+            self.flags_left += (1 if tile.is_tile_flagged() else -1)
+            self.flag_label.config(text = f'Flags Left: {self.flags_left}')
+            tile.toggle_flag()
 
 if __name__ == '__main__':
-    Land()
+    Land(9, 9)
